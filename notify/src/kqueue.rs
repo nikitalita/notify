@@ -15,6 +15,7 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use glob::Pattern;
 use walkdir::WalkDir;
 
 const KQUEUE: mio::Token = mio::Token(0);
@@ -34,6 +35,7 @@ struct EventLoop {
     kqueue: kqueue::Watcher,
     event_handler: Box<dyn EventHandler>,
     watches: HashMap<PathBuf, bool>,
+    ignore_globs: Vec<Pattern>,
     follow_symlinks: bool,
 }
 
@@ -55,6 +57,7 @@ impl EventLoop {
         kqueue: kqueue::Watcher,
         event_handler: Box<dyn EventHandler>,
         follow_symlinks: bool,
+        ignore_globs: Vec<Pattern>,
     ) -> Result<Self> {
         let (event_loop_tx, event_loop_rx) = unbounded::<EventLoopMsg>();
         let poll = mio::Poll::new()?;
@@ -75,6 +78,7 @@ impl EventLoop {
             kqueue,
             event_handler,
             watches: HashMap::new(),
+            ignore_globs,
             follow_symlinks,
         };
         Ok(event_loop)
@@ -295,6 +299,9 @@ impl EventLoop {
     fn add_watch(&mut self, path: PathBuf, is_recursive: bool) -> Result<()> {
         // If the watch is not recursive, or if we determine (by stat'ing the path to get its
         // metadata) that the watched path is not a directory, add a single path watch.
+        if self.ignore_globs.iter().any(|glob| glob.matches(&path.to_string_lossy())) {
+            return Ok(());
+        }
         if !is_recursive || !metadata(&path).map_err(Error::io)?.is_dir() {
             self.add_single_watch(path, false)?;
         } else {
@@ -303,7 +310,11 @@ impl EventLoop {
                 .into_iter()
             {
                 let entry = entry.map_err(map_walkdir_error)?;
-                self.add_single_watch(entry.path().to_path_buf(), is_recursive)?;
+                let entry_path = entry.path();
+                if self.ignore_globs.iter().any(|glob| glob.matches(&entry_path.to_string_lossy())) {
+                    continue;
+                }
+                self.add_single_watch(entry_path.to_path_buf(), is_recursive)?;
             }
         }
 
@@ -378,9 +389,11 @@ impl KqueueWatcher {
     fn from_event_handler(
         event_handler: Box<dyn EventHandler>,
         follow_symlinks: bool,
+        ignore_globs: &Vec<String>,
     ) -> Result<Self> {
         let kqueue = kqueue::Watcher::new()?;
-        let event_loop = EventLoop::new(kqueue, event_handler, follow_symlinks)?;
+        let ignore_globs: Vec<Pattern> = ignore_globs.iter().map(|glob| Pattern::new(glob).unwrap()).collect();
+        let event_loop = EventLoop::new(kqueue, event_handler, follow_symlinks, ignore_globs)?;
         let channel = event_loop.event_loop_tx.clone();
         let waker = event_loop.event_loop_waker.clone();
         event_loop.run();
@@ -433,7 +446,7 @@ impl KqueueWatcher {
 impl Watcher for KqueueWatcher {
     /// Create a new watcher.
     fn new<F: EventHandler>(event_handler: F, config: Config) -> Result<Self> {
-        Self::from_event_handler(Box::new(event_handler), config.follow_symlinks())
+        Self::from_event_handler(Box::new(event_handler), config.follow_symlinks(), &config.ignore_globs())
     }
 
     fn watch(&mut self, path: &Path, recursive_mode: RecursiveMode) -> Result<()> {

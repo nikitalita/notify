@@ -32,6 +32,7 @@ filetime.workspace = true
 libc.workspace = true
 log.workspace = true
 walkdir.workspace = true
+glob.workspace = true
 
 [target.'cfg(any(target_os="linux", target_os="android"))'.dependencies]
 inotify = { workspace = true, default-features = false }

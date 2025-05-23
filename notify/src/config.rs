@@ -35,7 +35,7 @@ impl RecursiveMode {
 /// ```
 ///
 /// Some options can be changed during runtime, others have to be set when creating the watcher backend.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Config {
     /// See [Config::with_poll_interval]
     poll_interval: Option<Duration>,
@@ -44,6 +44,8 @@ pub struct Config {
     compare_contents: bool,
 
     follow_symlinks: bool,
+
+    ignore_globs: Vec<String>,
 }
 
 impl Config {
@@ -112,6 +114,22 @@ impl Config {
     pub fn follow_symlinks(&self) -> bool {
         self.follow_symlinks
     }
+
+    /// For the [INotifyWatcher](crate::INotifyWatcher), [KqueueWatcher](crate::KqueueWatcher),
+    /// and [PollWatcher](crate::PollWatcher).
+    ///
+    /// Ignore files that match the given glob patterns.
+    ///
+    /// This can't be changed during runtime.
+    pub fn with_ignore_globs(mut self, ignore_globs: Vec<String>) -> Self {
+        self.ignore_globs = ignore_globs;
+        self
+    }
+
+    /// Returns current setting
+    pub fn ignore_globs(&self) -> &Vec<String> {
+        &self.ignore_globs
+    }
 }
 
 impl Default for Config {
@@ -120,6 +138,7 @@ impl Default for Config {
             poll_interval: Some(Duration::from_secs(30)),
             compare_contents: false,
             follow_symlinks: true,
+            ignore_globs: Vec::new()
         }
     }
 }
